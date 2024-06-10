@@ -1,0 +1,131 @@
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+
+# Configuração do logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+
+# Estados da conversa
+CHOOSING, PHOTO, BUTTON_NAME, BUTTON_URL, GROUP_ID = range(5)
+
+# Função de inicialização /start
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text(
+        'Olá! Você gostaria de enviar uma imagem antes de continuar?',
+        reply_markup=ReplyKeyboardMarkup(
+            [['Sim', 'Não']],
+            one_time_keyboard=True,
+            resize_keyboard=True
+        )
+    )
+    return CHOOSING
+
+# Função para lidar com a escolha inicial
+def choosing(update: Update, context: CallbackContext) -> int:
+    user_choice = update.message.text
+    if user_choice == 'Sim':
+        update.message.reply_text('Por favor, envie a imagem.')
+        return PHOTO
+    else:
+        update.message.reply_text('Por favor, forneça o nome para o botão interativo:')
+        return BUTTON_NAME
+
+# Função para lidar com o envio da imagem
+def photo(update: Update, context: CallbackContext) -> int:
+    photo_file = update.message.photo[-1].get_file()
+    photo_file.download('user_photo.jpg')
+    update.message.reply_text('Imagem recebida! Por favor, forneça o nome para o botão interativo:')
+    return BUTTON_NAME
+
+# Função para lidar com o nome do botão
+def button_name(update: Update, context: CallbackContext) -> int:
+    context.user_data['button_name'] = update.message.text
+    update.message.reply_text('Por favor, forneça o link para o botão interativo:')
+    return BUTTON_URL
+
+# Função para lidar com o link do botão
+def button_url(update: Update, context: CallbackContext) -> int:
+    context.user_data['button_url'] = update.message.text
+    update.message.reply_text('Por favor, forneça o ID do grupo ou canal onde as publicações serão enviadas:')
+    return GROUP_ID
+
+# Função para lidar com o ID do grupo/canal
+def group_id(update: Update, context: CallbackContext) -> int:
+    context.user_data['group_id'] = update.message.text
+    update.message.reply_text('Configuração completa! Agora você pode usar o comando /menu para ver as opções.')
+    return ConversationHandler.END
+
+# Função para criar o menu de botões
+def menu(update: Update, context: CallbackContext) -> None:
+    button_name = context.user_data.get('button_name', 'Opção 1')
+    button_url = context.user_data.get('button_url', 'https://example.com')
+    group_id = context.user_data.get('group_id')
+
+    keyboard = [
+        [InlineKeyboardButton(button_name, url=button_url)],
+        [InlineKeyboardButton("Opção 2", callback_data='2')],
+        [InlineKeyboardButton("Opção 3", callback_data='3')],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.message:
+        update.message.reply_text('Escolha uma opção:', reply_markup=reply_markup)
+    else:
+        update.callback_query.message.reply_text('Escolha uma opção:', reply_markup=reply_markup)
+
+    if group_id:
+        context.bot.send_message(chat_id=group_id, text="Publicação pronta para o grupo/canal!")
+
+# Função de callback para botões
+def button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+
+    # Confirma que a solicitação foi recebida
+    query.answer()
+
+    # Edita a mensagem original para mostrar a opção escolhida
+    query.edit_message_text(text=f"Você escolheu a opção {query.data}")
+
+# Função para lidar com erros
+def error(update: Update, context: CallbackContext) -> None:
+    """Log Errors caused by Updates."""
+    logger.warning('Update "%s" caused error "%s"', update, context.error)
+
+def main() -> None:
+    # Substitua 'YOUR_TOKEN' pelo token do seu bot
+    updater = Updater("6868374968:AAHjvnufoq7LNXYeT8ItK8sIstic2kt6uFs", use_context=True)
+
+    dispatcher = updater.dispatcher
+
+    # Conversação handler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            CHOOSING: [MessageHandler(Filters.regex('^(Sim|Não)$'), choosing)],
+            PHOTO: [MessageHandler(Filters.photo, photo)],
+            BUTTON_NAME: [MessageHandler(Filters.text & ~Filters.command, button_name)],
+            BUTTON_URL: [MessageHandler(Filters.text & ~Filters.command, button_url)],
+            GROUP_ID: [MessageHandler(Filters.text & ~Filters.command, group_id)]
+        },
+        fallbacks=[CommandHandler('start', start)]
+    )
+
+    dispatcher.add_handler(conv_handler)
+    dispatcher.add_handler(CommandHandler("menu", menu))
+    dispatcher.add_handler(CallbackQueryHandler(button))
+
+    # Log de erros
+    dispatcher.add_error_handler(error)
+
+    # Inicia o bot
+    updater.start_polling()
+
+    # Executa o bot até pressionar Ctrl+C
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
